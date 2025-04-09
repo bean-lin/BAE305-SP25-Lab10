@@ -34,52 +34,64 @@ print("\n📋 Available water quality characteristics:")
 for val in available_characteristics:
     print("  -", val)
 
-# Step 4: Prompt for characteristic
-characteristic = simpledialog.askstring("Input", "Enter water quality characteristic to plot (copy from above list):")
-if not characteristic:
-    print("No characteristic entered. Exiting.")
+# Step 4: Prompt for two characteristics
+char1 = simpledialog.askstring("Input", "Enter FIRST characteristic to plot:")
+char2 = simpledialog.askstring("Input", "Enter SECOND characteristic to plot:")
+if not char1 or not char2:
+    print("Both characteristics are required. Exiting.")
     sys.exit()
 
-# Step 5: Filter data to selected characteristic
-df_filtered = df[df["CharacteristicName"].astype(str).str.lower() == characteristic.lower()]
+# Step 5: Filter and clean data for each characteristic
+def filter_clean(df, char):
+    df_c = df[df["CharacteristicName"].astype(str).str.lower() == char.lower()].copy()
+    df_c["ActivityStartDate"] = pd.to_datetime(df_c["ActivityStartDate"], errors='coerce')
+    df_c["ResultMeasureValue"] = pd.to_numeric(df_c["ResultMeasureValue"], errors='coerce')
+    df_c = df_c.dropna(subset=["ActivityStartDate", "ResultMeasureValue", "MonitoringLocationIdentifier"])
+    return df_c
 
-# Diagnostics: pre-cleaning counts
-print(f"\n📊 Total rows matching '{characteristic}': {len(df_filtered)}")
+df1 = filter_clean(df, char1)
+df2 = filter_clean(df, char2)
 
-# Convert to datetime and numeric
-df_filtered["ActivityStartDate"] = pd.to_datetime(df_filtered["ActivityStartDate"], errors='coerce')
-df_filtered["ResultMeasureValue"] = pd.to_numeric(df_filtered["ResultMeasureValue"], errors='coerce')
+# Step 6: Keep only overlapping sites
+shared_sites = set(df1["MonitoringLocationIdentifier"]) & set(df2["MonitoringLocationIdentifier"])
+df1 = df1[df1["MonitoringLocationIdentifier"].isin(shared_sites)]
+df2 = df2[df2["MonitoringLocationIdentifier"].isin(shared_sites)]
 
-print("✅ Rows with valid dates:", df_filtered["ActivityStartDate"].notna().sum())
-print("✅ Rows with valid numeric values:", df_filtered["ResultMeasureValue"].notna().sum())
+print(f"\n✅ Overlapping sites found: {len(shared_sites)}")
 
-# Drop rows missing critical info
-df_filtered = df_filtered.dropna(subset=["ActivityStartDate", "ResultMeasureValue"])
-df_filtered.sort_values("ActivityStartDate", inplace=True)
+# Step 7: Determine units
+def get_unit(df):
+    units = df["ResultMeasure/MeasureUnitCode"].dropna().unique()
+    if len(units) == 1:
+        return units[0]
+    elif len(units) > 1:
+        return "multiple units"
+    return "(unit unknown)"
 
-# Post-cleaning diagnostics
-print("📉 Remaining rows after cleaning:", len(df_filtered))
-print("📍 Unique monitoring sites to plot:", df_filtered['MonitoringLocationIdentifier'].nunique())
+unit1 = get_unit(df1)
+unit2 = get_unit(df2)
 
-# Step 6: Determine unit(s) for Y-axis label
-unit_col = "ResultMeasure/MeasureUnitCode"
-units = df_filtered[unit_col].dropna().unique()
-if len(units) == 1:
-    unit_label = units[0]
-elif len(units) > 1:
-    unit_label = "multiple units"
-else:
-    unit_label = "(unit unknown)"
+# Step 8: Plot dual-axis
+fig, ax1 = plt.subplots(figsize=(12, 6))
+ax2 = ax1.twinx()
 
-# Step 7: Plot each site (with markers)
-plt.figure(figsize=(12, 6))
-for site, group in df_filtered.groupby("MonitoringLocationIdentifier"):
-    plt.plot(group["ActivityStartDate"], group["ResultMeasureValue"], label=site, marker='o')
+for site in shared_sites:
+    group1 = df1[df1["MonitoringLocationIdentifier"] == site]
+    group2 = df2[df2["MonitoringLocationIdentifier"] == site]
+    
+    ax1.plot(group1["ActivityStartDate"], group1["ResultMeasureValue"], label=f"{site} - {char1}", marker='o')
+    ax2.plot(group2["ActivityStartDate"], group2["ResultMeasureValue"], label=f"{site} - {char2}", linestyle='--', marker='x')
 
-plt.title(f"{characteristic} Over Time by Site")
-plt.xlabel("Date")
-plt.ylabel(f"{characteristic} ({unit_label})")
-plt.legend(title="Site", bbox_to_anchor=(1.05, 1), loc='upper left')
+ax1.set_title(f"{char1} (left) and {char2} (right) Over Time by Site")
+ax1.set_xlabel("Date")
+ax1.set_ylabel(f"{char1} ({unit1})")
+ax2.set_ylabel(f"{char2} ({unit2})")
+
+# Combine and place legend
+lines_1, labels_1 = ax1.get_legend_handles_labels()
+lines_2, labels_2 = ax2.get_legend_handles_labels()
+ax1.legend(lines_1 + lines_2, labels_1 + labels_2, bbox_to_anchor=(1.05, 1), loc='upper left', title="Site + Characteristic")
+
 plt.tight_layout()
 plt.grid(True)
 plt.show()
